@@ -31,6 +31,9 @@
     border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); z-index: 1; }
   .list-controls input { flex: 1; background: var(--panel2); border: 1px solid var(--border);
     color: var(--text); padding: 6px 8px; border-radius: 6px; font-size: 12px; }
+  .live-btn { font-size: 11px; padding: 5px 9px; white-space: nowrap; }
+  .live-btn.on { border-color: var(--green); color: var(--green); }
+  .live-btn.off { border-color: var(--orange); color: var(--orange); }
   .item { padding: 10px 12px; border-bottom: 1px solid var(--border); cursor: pointer; }
   .item:hover { background: var(--panel2); }
   .item.active { background: var(--panel2); border-left: 3px solid var(--accent); padding-left: 9px; }
@@ -116,6 +119,7 @@
   <div class="list">
     <div class="list-controls">
       <input id="filter" placeholder="Filter by method or path…" />
+      <button id="liveBtn" class="live-btn on" title="When on, the newest request is shown automatically as it arrives">● Live</button>
       <span class="pill" id="count">0</span>
     </div>
     <div id="items"></div>
@@ -127,8 +131,9 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const state = { requests: [], selectedId: null, filter: "", bodyMode: "pretty", bodySearch: "", bodyPath: "" };
+const state = { requests: [], selectedId: null, filter: "", bodyMode: "pretty", bodySearch: "", bodyPath: "", follow: true };
 const el = (id) => document.getElementById(id);
+const listEl = () => document.querySelector(".list");
 
 const hookUrl = el("hookUrl");
 const origin = location.origin;
@@ -139,6 +144,29 @@ hookUrl.onclick = () => {
 };
 
 el("filter").oninput = (e) => { state.filter = e.target.value.toLowerCase(); renderList(); };
+el("liveBtn").onclick = () => setFollow(!state.follow);
+
+function setFollow(on) {
+  state.follow = on;
+  const btn = el("liveBtn");
+  btn.classList.toggle("on", on);
+  btn.classList.toggle("off", !on);
+  btn.textContent = on ? "● Live" : "❚❚ Paused";
+  if (on && state.requests.length) {
+    state.selectedId = state.requests[0].id;
+    listEl().scrollTop = 0;
+    renderList();
+    renderDetail();
+  }
+}
+
+// Pause live-follow when the user scrolls the list away from the top.
+function watchScroll() {
+  const l = listEl();
+  l.addEventListener("scroll", () => {
+    if (state.follow && l.scrollTop > 8) setFollow(false);
+  });
+}
 el("exportBtn").onclick = () => {
   if (!state.requests.length) { showToast("Nothing to export"); return; }
   // Export oldest → newest as JSONL (one request per line).
@@ -183,6 +211,8 @@ function esc(s) {
 
 function renderList() {
   const items = el("items");
+  const l = listEl();
+  const prevScroll = l ? l.scrollTop : 0;
   const filtered = state.requests.filter((r) => {
     if (!state.filter) return true;
     return (r.method + " " + r.path).toLowerCase().includes(state.filter);
@@ -204,9 +234,13 @@ function renderList() {
     node.onclick = () => {
       state.selectedId = node.dataset.id;
       state.bodySearch = ""; state.bodyPath = ""; // reset per-request body queries
+      // Inspecting an older request pauses live-follow; selecting the newest resumes it.
+      setFollow(node.dataset.id === (state.requests[0] && state.requests[0].id));
       renderList(); renderDetail();
     };
   }
+  // Live-follow keeps the newest at the top in view; otherwise keep the user's scroll.
+  if (l) l.scrollTop = state.follow ? 0 : prevScroll;
 }
 
 function kvTable(obj) {
@@ -397,7 +431,8 @@ function renderDetail() {
 function addRequest(r, isNew) {
   state.requests.unshift(r);
   if (state.requests.length > 1000) state.requests.length = 1000;
-  if (!state.selectedId) state.selectedId = r.id;
+  // In live-follow mode, jump selection to the newest request and show it.
+  if (state.follow || !state.selectedId) state.selectedId = r.id;
   renderList();
   if (state.selectedId === r.id) renderDetail();
   if (isNew) {
@@ -429,12 +464,13 @@ function connect() {
     const msg = JSON.parse(ev.data);
     if (msg.type === "request") addRequest(msg.request, true);
     else if (msg.type === "clear") {
-      state.requests = []; state.selectedId = null; renderList();
+      state.requests = []; state.selectedId = null; setFollow(true); renderList();
       el("detail").innerHTML = '<div class="empty">Cleared. Waiting for requests…</div>';
     }
   };
 }
 
+watchScroll();
 loadInitial().then(connect);
 setInterval(renderList, 30000); // refresh relative timestamps
 </script>
