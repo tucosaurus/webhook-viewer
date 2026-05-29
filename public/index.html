@@ -60,6 +60,39 @@
     font-family: ui-monospace, Menlo, monospace; }
   td.k { color: var(--purple); white-space: nowrap; width: 1%; padding-right: 16px; }
   td.v { color: var(--text); word-break: break-all; }
+  /* ---- Body viewer ---- */
+  .body-tools { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .seg { display: flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+  .seg button { border: none; border-radius: 0; background: var(--panel); padding: 5px 11px; font-size: 12px; color: var(--muted); }
+  .seg button.active { background: var(--accent); color: #fff; }
+  .body-tools input { background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    padding: 5px 8px; border-radius: 6px; font-size: 12px; }
+  #bodySearch { flex: 1; min-width: 120px; }
+  .match-count { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .path-tools { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+  #bodyPath { width: 100%; background: var(--panel2); border: 1px solid var(--border); color: var(--text);
+    padding: 7px 9px; border-radius: 6px; font-size: 12px; font-family: ui-monospace, Menlo, monospace; }
+  #bodyPath:focus { outline: none; border-color: var(--accent); }
+  .path-result { font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+  .path-result.err { color: var(--orange); }
+  .path-val { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 6px 9px;
+    margin-bottom: 4px; color: var(--green); word-break: break-all; display: flex;
+    justify-content: space-between; gap: 8px; align-items: center; }
+  .mini-copy { font-size: 10px; padding: 2px 7px; flex-shrink: 0; }
+  .jt-root { font-family: ui-monospace, Menlo, monospace; font-size: 12px; line-height: 1.65; }
+  .jt-node > summary { cursor: pointer; list-style: none; }
+  .jt-node > summary::-webkit-details-marker { display: none; }
+  .jt-node > summary::before { content: "▸"; display: inline-block; width: 1em; color: var(--muted); }
+  .jt-node[open] > summary::before { content: "▾"; }
+  .jt-children { padding-left: 14px; border-left: 1px solid var(--border); margin-left: 4px; }
+  .jt-leaf { padding-left: 1em; }
+  .jt-key { color: var(--purple); }
+  .jt-meta { color: var(--muted); }
+  .jt-str { color: var(--green); }
+  .jt-num { color: var(--accent); }
+  .jt-bool { color: var(--orange); }
+  .jt-null { color: var(--red); }
+  mark { background: var(--orange); color: #000; border-radius: 2px; padding: 0 1px; }
   .empty { color: var(--muted); text-align: center; margin-top: 80px; font-size: 13px; }
   .pill { font-size: 11px; color: var(--muted); }
   .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
@@ -93,7 +126,7 @@
 <div class="toast" id="toast"></div>
 
 <script>
-const state = { requests: [], selectedId: null, filter: "" };
+const state = { requests: [], selectedId: null, filter: "", bodyMode: "pretty", bodySearch: "", bodyPath: "" };
 const el = (id) => document.getElementById(id);
 
 const hookUrl = el("hookUrl");
@@ -152,7 +185,11 @@ function renderList() {
       <div class="item-time">${timeAgo(r.receivedAt)} · ${r.size} bytes · ${esc(r.ip)}</div>
     </div>`).join("");
   for (const node of items.querySelectorAll(".item")) {
-    node.onclick = () => { state.selectedId = node.dataset.id; renderList(); renderDetail(); };
+    node.onclick = () => {
+      state.selectedId = node.dataset.id;
+      state.bodySearch = ""; state.bodyPath = ""; // reset per-request body queries
+      renderList(); renderDetail();
+    };
   }
 }
 
@@ -164,28 +201,181 @@ function kvTable(obj) {
   ).join("")}</table>`;
 }
 
+// Highlight occurrences of `term` (case-insensitive) inside already-escaped HTML text.
+function highlight(escapedText, term) {
+  if (!term) return escapedText;
+  const safe = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return escapedText.replace(new RegExp(safe, "gi"), (m) => `<mark>${m}</mark>`);
+}
+
+// Render a JS value as a collapsible JSON tree. `open` = expanded by default.
+// `term` highlights matching keys/values.
+function jsonTree(value, key, term, open) {
+  const keyHtml = key != null ? `<span class="jt-key">${highlight(esc(key), term)}</span>: ` : "";
+  if (value === null) return `<div class="jt-leaf">${keyHtml}<span class="jt-null">null</span></div>`;
+  const t = typeof value;
+  if (t !== "object") {
+    const cls = t === "string" ? "jt-str" : t === "number" ? "jt-num" : "jt-bool";
+    const text = t === "string" ? `"${value}"` : String(value);
+    return `<div class="jt-leaf">${keyHtml}<span class="${cls}">${highlight(esc(text), term)}</span></div>`;
+  }
+  const isArr = Array.isArray(value);
+  const entries = isArr ? value.map((v, i) => [i, v]) : Object.entries(value);
+  if (entries.length === 0) {
+    return `<div class="jt-leaf">${keyHtml}<span class="jt-meta">${isArr ? "[]" : "{}"}</span></div>`;
+  }
+  const label = isArr ? `[${entries.length}]` : `{${entries.length}}`;
+  const children = entries
+    .map(([k, v]) => jsonTree(v, isArr ? null : String(k), term, open))
+    .join("");
+  return `<details class="jt-node"${open ? " open" : ""}>
+    <summary>${keyHtml}<span class="jt-meta">${label}</span></summary>
+    <div class="jt-children">${children}</div>
+  </details>`;
+}
+
+// Resolve a dot/bracket path (e.g. "record.input1.time", "Server[0].data", "$.a.b")
+// against an object. Supports wildcard "*" / "[*]" to collect all matches.
+function resolvePath(obj, pathStr) {
+  let p = pathStr.trim().replace(/^\$\.?/, "");
+  if (!p) return [{ path: "$", value: obj }];
+  // Normalize [n] / [*] into .n / .* segments.
+  const tokens = p
+    .replace(/\[(\*|\d+)\]/g, ".$1")
+    .split(".")
+    .filter((s) => s.length > 0);
+  let frontier = [{ path: "$", value: obj }];
+  for (const tok of tokens) {
+    const next = [];
+    for (const node of frontier) {
+      const v = node.value;
+      if (v == null || typeof v !== "object") continue;
+      if (tok === "*") {
+        const entries = Array.isArray(v) ? v.map((x, i) => [i, x]) : Object.entries(v);
+        for (const [k, val] of entries) next.push({ path: `${node.path}.${k}`, value: val });
+      } else if (tok in v) {
+        next.push({ path: `${node.path}.${tok}`, value: v[tok] });
+      }
+    }
+    frontier = next;
+  }
+  return frontier;
+}
+
+function renderPathResult(parsed) {
+  const box = el("pathResult");
+  if (!box) return;
+  const q = (el("bodyPath").value || "").trim();
+  if (!q) { box.innerHTML = '<span class="jt-meta">Enter a path like <code>record.input1.time</code> or <code>Server[*].data</code></span>'; return; }
+  let matches;
+  try {
+    matches = resolvePath(parsed, q);
+  } catch (e) {
+    box.className = "path-result err";
+    box.textContent = "Invalid path: " + e.message;
+    return;
+  }
+  box.className = "path-result";
+  if (!matches.length) { box.innerHTML = '<span class="path-result err">No match</span>'; return; }
+  box.innerHTML = matches.map((m) => {
+    const valStr = typeof m.value === "object" ? JSON.stringify(m.value) : String(m.value);
+    return `<div class="path-val"><span><span class="jt-meta">${esc(m.path)} = </span>${esc(valStr)}</span>
+      <button class="mini-copy" data-copy="${esc(valStr)}">copy</button></div>`;
+  }).join("");
+  for (const b of box.querySelectorAll(".mini-copy")) {
+    b.onclick = () => { navigator.clipboard.writeText(b.dataset.copy); showToast("Value copied"); };
+  }
+}
+
+function renderBody() {
+  const r = state.requests.find((x) => x.id === state.selectedId);
+  const host = el("bodyView");
+  if (!r || !host) return;
+  const term = (el("bodySearch") && el("bodySearch").value || "").trim();
+  const b = r.body;
+
+  if (b.kind === "empty") { host.innerHTML = '<div class="pill">— empty body —</div>'; return; }
+
+  const hasParsed = b.parsed != null && typeof b.parsed === "object";
+
+  if (state.bodyMode === "raw" || !hasParsed) {
+    let count = 0;
+    let html = esc(b.text);
+    if (term) {
+      const safe = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      html = html.replace(new RegExp(safe, "gi"), (m) => { count++; return `<mark>${m}</mark>`; });
+    }
+    host.innerHTML = `<pre>${html}</pre>`;
+    setMatchCount(term ? count : -1);
+    return;
+  }
+
+  // Pretty (tree) mode for JSON / form objects.
+  host.innerHTML = `<div class="jt-root">${jsonTree(b.parsed, null, term, true)}</div>`;
+  if (term) {
+    // Auto-expand ancestors of matches so highlights are visible.
+    for (const mk of host.querySelectorAll("mark")) {
+      let n = mk.parentElement;
+      while (n && n !== host) { if (n.tagName === "DETAILS") n.open = true; n = n.parentElement; }
+    }
+    setMatchCount(host.querySelectorAll("mark").length);
+  } else {
+    setMatchCount(-1);
+  }
+}
+
+function setMatchCount(n) {
+  const el2 = el("matchCount");
+  if (el2) el2.textContent = n < 0 ? "" : `${n} match${n === 1 ? "" : "es"}`;
+}
+
 function renderDetail() {
   const r = state.requests.find((x) => x.id === state.selectedId);
   const d = el("detail");
   if (!r) { d.innerHTML = '<div class="empty">Select a request</div>'; return; }
 
-  let bodyHtml;
-  if (r.body.kind === "empty") {
-    bodyHtml = '<div class="pill">— empty body —</div>';
-  } else if (r.body.kind === "json") {
-    bodyHtml = `<pre>${esc(JSON.stringify(r.body.parsed, null, 2))}</pre>`;
-  } else if (r.body.kind === "form") {
-    bodyHtml = kvTable(r.body.parsed);
-  } else {
-    bodyHtml = `<pre>${esc(r.body.text)}</pre>`;
-  }
+  const hasParsed = r.body.parsed != null && typeof r.body.parsed === "object";
+  const canCopy = r.body.kind !== "empty";
+
+  const tools = r.body.kind === "empty" ? "" : `
+    <div class="body-tools">
+      ${hasParsed ? `<div class="seg" id="bodyModeSeg">
+        <button data-mode="pretty" class="${state.bodyMode === "pretty" ? "active" : ""}">Pretty</button>
+        <button data-mode="raw" class="${state.bodyMode === "raw" ? "active" : ""}">Raw</button>
+      </div>` : ""}
+      <input id="bodySearch" placeholder="Search in body…" value="${esc(state.bodySearch || "")}" />
+      <span class="match-count" id="matchCount"></span>
+      ${canCopy ? `<button id="copyBody">Copy</button>` : ""}
+    </div>
+    ${hasParsed ? `<div class="path-tools">
+      <input id="bodyPath" placeholder="Extract path, e.g. record.input1.time or Server[*].data" value="${esc(state.bodyPath || "")}" />
+      <div class="path-result" id="pathResult"></div>
+    </div>` : ""}`;
 
   d.innerHTML = `
     <h2><span class="method ${methodClass(r.method)}">${esc(r.method)}</span> ${esc(r.path)}</h2>
     <div class="sub">${esc(r.receivedAt)} · from ${esc(r.ip)} · ${r.size} bytes · ${esc(r.body.kind)}</div>
     <div class="section"><h3>Query Params</h3>${kvTable(r.query)}</div>
-    <div class="section"><h3>Body</h3>${bodyHtml}</div>
+    <div class="section"><h3>Body</h3>${tools}<div id="bodyView"></div></div>
     <div class="section"><h3>Headers</h3>${kvTable(r.headers)}</div>`;
+
+  // Wire up body-viewer controls.
+  const seg = el("bodyModeSeg");
+  if (seg) for (const btn of seg.querySelectorAll("button")) {
+    btn.onclick = () => { state.bodyMode = btn.dataset.mode; renderDetail(); };
+  }
+  const search = el("bodySearch");
+  if (search) search.oninput = () => { state.bodySearch = search.value; renderBody(); };
+  const copyBtn = el("copyBody");
+  if (copyBtn) copyBtn.onclick = () => {
+    const text = hasParsed ? JSON.stringify(r.body.parsed, null, 2) : r.body.text;
+    navigator.clipboard.writeText(text); showToast("Body copied");
+  };
+  const pathInput = el("bodyPath");
+  if (pathInput) pathInput.oninput = () => { state.bodyPath = pathInput.value; renderPathResult(r.body.parsed); };
+
+  renderBody();
+  if (hasParsed) renderPathResult(r.body.parsed);
 }
 
 function addRequest(r, isNew) {
