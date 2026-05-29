@@ -3,7 +3,7 @@ services:
     name: webhook-viewer
     runtime: node
     plan: free
-    buildCommand: ""
+    buildCommand: "npm install"
     startCommand: node server.js
     envVars:
       - key: MAX_REQUESTS
