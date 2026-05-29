@@ -107,6 +107,7 @@
   <div class="status"><span class="dot" id="dot"></span><span id="statusText">connecting…</span></div>
   <div class="url-box">
     <span>Send to:</span><code id="hookUrl" title="Click to copy">…</code>
+    <button id="exportBtn" title="Download all in-memory requests as JSONL">Export</button>
     <button id="clearBtn">Clear</button>
     <button id="logoutBtn">Sign out</button>
   </div>
@@ -138,6 +139,21 @@ hookUrl.onclick = () => {
 };
 
 el("filter").oninput = (e) => { state.filter = e.target.value.toLowerCase(); renderList(); };
+el("exportBtn").onclick = () => {
+  if (!state.requests.length) { showToast("Nothing to export"); return; }
+  // Export oldest → newest as JSONL (one request per line).
+  const jsonl = [...state.requests].reverse().map((r) => JSON.stringify(r)).join("\n") + "\n";
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const blob = new Blob([jsonl], { type: "application/x-ndjson" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `webhook-export-${stamp}.jsonl`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+  showToast(`Exported ${state.requests.length} request${state.requests.length === 1 ? "" : "s"}`);
+};
 el("clearBtn").onclick = async () => {
   if (!confirm("Clear all captured requests?")) return;
   await fetch("/__api/clear", { method: "POST" });
