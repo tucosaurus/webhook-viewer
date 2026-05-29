@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: webhook-viewer
+    runtime: node
+    plan: free
+    buildCommand: ""
+    startCommand: node server.js
+    envVars:
+      - key: MAX_REQUESTS
+        value: "500"
+      - key: VIEWER_TOKEN
+        sync: false   # set the secret value in the Render dashboard

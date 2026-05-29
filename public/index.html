@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Webhook Viewer</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel2: #1c2330; --border: #30363d;
+    --text: #e6edf3; --muted: #8b949e; --accent: #2f81f7; --green: #3fb950;
+    --orange: #d29922; --red: #f85149; --purple: #bc8cff;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
+  header { display: flex; align-items: center; gap: 12px; padding: 12px 18px;
+    background: var(--panel); border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .status { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--red); }
+  .dot.live { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .url-box { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+  .url-box code { background: var(--panel2); padding: 4px 8px; border-radius: 6px; color: var(--accent);
+    border: 1px solid var(--border); cursor: pointer; }
+  button { background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+  button:hover { border-color: var(--accent); }
+  .layout { display: flex; height: calc(100vh - 53px); }
+  .list { width: 360px; min-width: 360px; border-right: 1px solid var(--border); overflow-y: auto; background: var(--panel); }
+  .list-controls { padding: 8px 12px; display: flex; gap: 8px; align-items: center;
+    border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--panel); z-index: 1; }
+  .list-controls input { flex: 1; background: var(--panel2); border: 1px solid var(--border);
+    color: var(--text); padding: 6px 8px; border-radius: 6px; font-size: 12px; }
+  .item { padding: 10px 12px; border-bottom: 1px solid var(--border); cursor: pointer; }
+  .item:hover { background: var(--panel2); }
+  .item.active { background: var(--panel2); border-left: 3px solid var(--accent); padding-left: 9px; }
+  .item.new { animation: flash 1s ease; }
+  @keyframes flash { from { background: rgba(47,129,247,0.25); } to { background: transparent; } }
+  .item-row { display: flex; align-items: center; gap: 8px; }
+  .method { font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 4px; letter-spacing: .3px; }
+  .m-GET { background: rgba(63,185,80,.15); color: var(--green); }
+  .m-POST { background: rgba(47,129,247,.15); color: var(--accent); }
+  .m-PUT { background: rgba(210,153,34,.15); color: var(--orange); }
+  .m-DELETE { background: rgba(248,81,73,.15); color: var(--red); }
+  .m-PATCH, .m-OTHER { background: rgba(188,140,255,.15); color: var(--purple); }
+  .item-path { font-family: ui-monospace, Menlo, monospace; font-size: 12px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .item-time { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .detail { flex: 1; overflow-y: auto; padding: 20px; }
+  .detail h2 { font-size: 14px; margin: 0 0 4px; }
+  .detail .sub { color: var(--muted); font-size: 12px; margin-bottom: 18px; font-family: ui-monospace, monospace; }
+  .section { margin-bottom: 20px; }
+  .section h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted);
+    margin: 0 0 8px; border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  pre { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px;
+    overflow-x: auto; font-size: 12px; font-family: ui-monospace, Menlo, monospace; margin: 0;
+    white-space: pre-wrap; word-break: break-word; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  td { padding: 5px 8px; border-bottom: 1px solid var(--border); vertical-align: top;
+    font-family: ui-monospace, Menlo, monospace; }
+  td.k { color: var(--purple); white-space: nowrap; width: 1%; padding-right: 16px; }
+  td.v { color: var(--text); word-break: break-all; }
+  .empty { color: var(--muted); text-align: center; margin-top: 80px; font-size: 13px; }
+  .pill { font-size: 11px; color: var(--muted); }
+  .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    background: var(--panel2); border: 1px solid var(--accent); padding: 8px 14px; border-radius: 8px;
+    font-size: 12px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🪝 Webhook Viewer</h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="statusText">connecting…</span></div>
+  <div class="url-box">
+    <span>Send to:</span><code id="hookUrl" title="Click to copy">…</code>
+    <button id="clearBtn">Clear</button>
+    <button id="logoutBtn">Sign out</button>
+  </div>
+</header>
+<div class="layout">
+  <div class="list">
+    <div class="list-controls">
+      <input id="filter" placeholder="Filter by method or path…" />
+      <span class="pill" id="count">0</span>
+    </div>
+    <div id="items"></div>
+  </div>
+  <div class="detail" id="detail">
+    <div class="empty">Waiting for requests…<br/><br/>Send a GET or POST to your URL and it'll appear here instantly.</div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const state = { requests: [], selectedId: null, filter: "" };
+const el = (id) => document.getElementById(id);
+
+const hookUrl = el("hookUrl");
+const origin = location.origin;
+hookUrl.textContent = origin + "/webhook";
+hookUrl.onclick = () => {
+  navigator.clipboard.writeText(hookUrl.textContent);
+  showToast("URL copied");
+};
+
+el("filter").oninput = (e) => { state.filter = e.target.value.toLowerCase(); renderList(); };
+el("clearBtn").onclick = async () => {
+  if (!confirm("Clear all captured requests?")) return;
+  await fetch("/__api/clear", { method: "POST" });
+};
+el("logoutBtn").onclick = async () => {
+  await fetch("/__api/logout", { method: "POST" });
+  location.reload();
+};
+
+function showToast(msg) {
+  const t = el("toast"); t.textContent = msg; t.classList.add("show");
+  setTimeout(() => t.classList.remove("show"), 1500);
+}
+
+function methodClass(m) {
+  return ["GET","POST","PUT","DELETE","PATCH"].includes(m) ? "m-" + m : "m-OTHER";
+}
+function timeAgo(iso) {
+  const d = new Date(iso); const s = Math.floor((Date.now() - d) / 1000);
+  if (s < 60) return s + "s ago";
+  if (s < 3600) return Math.floor(s/60) + "m ago";
+  return d.toLocaleTimeString();
+}
+function esc(s) {
+  return String(s).replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+}
+
+function renderList() {
+  const items = el("items");
+  const filtered = state.requests.filter((r) => {
+    if (!state.filter) return true;
+    return (r.method + " " + r.path).toLowerCase().includes(state.filter);
+  });
+  el("count").textContent = state.requests.length;
+  if (filtered.length === 0) {
+    items.innerHTML = '<div class="empty" style="margin-top:40px;font-size:12px;">No requests</div>';
+    return;
+  }
+  items.innerHTML = filtered.map((r) => `
+    <div class="item ${r.id === state.selectedId ? "active" : ""}" data-id="${r.id}">
+      <div class="item-row">
+        <span class="method ${methodClass(r.method)}">${esc(r.method)}</span>
+        <span class="item-path">${esc(r.path)}</span>
+      </div>
+      <div class="item-time">${timeAgo(r.receivedAt)} · ${r.size} bytes · ${esc(r.ip)}</div>
+    </div>`).join("");
+  for (const node of items.querySelectorAll(".item")) {
+    node.onclick = () => { state.selectedId = node.dataset.id; renderList(); renderDetail(); };
+  }
+}
+
+function kvTable(obj) {
+  const keys = Object.keys(obj || {});
+  if (keys.length === 0) return '<div class="pill">— none —</div>';
+  return `<table>${keys.map((k) =>
+    `<tr><td class="k">${esc(k)}</td><td class="v">${esc(typeof obj[k] === "object" ? JSON.stringify(obj[k]) : obj[k])}</td></tr>`
+  ).join("")}</table>`;
+}
+
+function renderDetail() {
+  const r = state.requests.find((x) => x.id === state.selectedId);
+  const d = el("detail");
+  if (!r) { d.innerHTML = '<div class="empty">Select a request</div>'; return; }
+
+  let bodyHtml;
+  if (r.body.kind === "empty") {
+    bodyHtml = '<div class="pill">— empty body —</div>';
+  } else if (r.body.kind === "json") {
+    bodyHtml = `<pre>${esc(JSON.stringify(r.body.parsed, null, 2))}</pre>`;
+  } else if (r.body.kind === "form") {
+    bodyHtml = kvTable(r.body.parsed);
+  } else {
+    bodyHtml = `<pre>${esc(r.body.text)}</pre>`;
+  }
+
+  d.innerHTML = `
+    <h2><span class="method ${methodClass(r.method)}">${esc(r.method)}</span> ${esc(r.path)}</h2>
+    <div class="sub">${esc(r.receivedAt)} · from ${esc(r.ip)} · ${r.size} bytes · ${esc(r.body.kind)}</div>
+    <div class="section"><h3>Query Params</h3>${kvTable(r.query)}</div>
+    <div class="section"><h3>Body</h3>${bodyHtml}</div>
+    <div class="section"><h3>Headers</h3>${kvTable(r.headers)}</div>`;
+}
+
+function addRequest(r, isNew) {
+  state.requests.unshift(r);
+  if (state.requests.length > 1000) state.requests.length = 1000;
+  if (!state.selectedId) state.selectedId = r.id;
+  renderList();
+  if (state.selectedId === r.id) renderDetail();
+  if (isNew) {
+    const node = document.querySelector(`.item[data-id="${r.id}"]`);
+    if (node) node.classList.add("new");
+  }
+}
+
+function setStatus(live) {
+  el("dot").classList.toggle("live", live);
+  el("statusText").textContent = live ? "live" : "disconnected";
+}
+
+async function loadInitial() {
+  const res = await fetch("/__api/requests");
+  if (res.status === 401) { location.reload(); return; } // session expired → login page
+  const data = await res.json();
+  state.requests = data.requests;
+  if (state.requests.length) state.selectedId = state.requests[0].id;
+  renderList();
+  renderDetail();
+}
+
+function connect() {
+  const es = new EventSource("/__events");
+  es.onopen = () => setStatus(true);
+  es.onerror = () => setStatus(false);
+  es.onmessage = (ev) => {
+    const msg = JSON.parse(ev.data);
+    if (msg.type === "request") addRequest(msg.request, true);
+    else if (msg.type === "clear") {
+      state.requests = []; state.selectedId = null; renderList();
+      el("detail").innerHTML = '<div class="empty">Cleared. Waiting for requests…</div>';
+    }
+  };
+}
+
+loadInitial().then(connect);
+setInterval(renderList, 30000); // refresh relative timestamps
+</script>
+</body>
+</html>
